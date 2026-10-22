@@ -1,0 +1,11 @@
+# GLM-4.7-Flash (MoE, 64 experts, 4 active; 47 layers, hidden 2048). Thinking disabled: no chain of thought.
+model_id: zai-org/GLM-4.7-Flash
+dtype: bfloat16
+device_map: auto
+k_positions: 8            # last K prompt tokens recorded / intervened on
+store_layers: null        # null = all layers; else a list of depth fractions, e.g. [0.25, 0.5, 0.75]
+middle_band: [0.25, 0.75] # half-open band of depth fractions (32 layers -> layers 8..23)
+seed: 0
+batch_size: 16
+chat_template_kwargs:
+  enable_thinking: false

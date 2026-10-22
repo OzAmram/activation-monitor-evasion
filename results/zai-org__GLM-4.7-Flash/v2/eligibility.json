@@ -1,0 +1,19 @@
+{
+  "model_id": "zai-org/GLM-4.7-Flash",
+  "dataset_version": "v2",
+  "items": "data/three_hop_eval_v2.parquet",
+  "n": 3000,
+  "baseline_accuracy": 0.115,
+  "chance_null_prompt": 0.0713356925092695,
+  "n_null_missing": 30,
+  "mean_letter_mass": 0.9679460525512695,
+  "hop1_known": 0.374,
+  "hop2_known": 0.5266666666666666,
+  "hop3_known": 0.9953333333333333,
+  "hops_known": 0.22966666666666666,
+  "n_baseline_correct": 345,
+  "n_fl_defined": 1301,
+  "fl_accuracy": 0.0007686395080707148,
+  "single_letter_accuracy_on_fl_defined": 0.09531129900076864,
+  "n_baseline_correct_and_hops_known": 146
+}

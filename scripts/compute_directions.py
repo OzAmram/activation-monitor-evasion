@@ -90,6 +90,9 @@ def main():
     # Ablation test on baseline-correct items.
     prompts = format_prompts(tok, correct["question"].tolist())
     res = correct[["item_id", "e2_qid", "ctrl_qid"]].copy()
+    # No-ablation reference under the same single-item runs (batched eligibility can differ on near-ties).
+    res["correct_none"] = [grade(record(model, tok, prompts[i:i + 1], k=1, layers=[0]).next_tokens[0], l)
+                           for i, l in enumerate(correct["letter"])]
     for band, pos in SWEEP:
         layers = layers_in_band(list(band), L)
         k = cfg.k_positions if pos == "lastK" else 10**6
@@ -101,7 +104,7 @@ def main():
                     outs.append(record(model, tok, prompts[i:i + 1], k=1, layers=[0]).next_tokens[0])
             res[f"correct_{which}_{band[0]}-{band[1]}_{pos}"] = [grade(o, l) for o, l in zip(outs, correct["letter"])]
     tag = f"{PRIMARY['band'][0]}-{PRIMARY['band'][1]}_{PRIMARY['positions']}"
-    res["bridge_necessary"] = ~res[f"correct_e2_{tag}"] & res[f"correct_ctrl_{tag}"]
+    res["bridge_necessary"] = res["correct_none"] & ~res[f"correct_e2_{tag}"] & res[f"correct_ctrl_{tag}"]
     res.to_parquet(out_dir / "bridge_necessary.parquet", index=False)
 
     summary = {"n_baseline_correct": len(res), "primary": tag, "n_bridge_necessary": int(res["bridge_necessary"].sum()),

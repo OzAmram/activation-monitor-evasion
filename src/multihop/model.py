@@ -42,6 +42,7 @@ class ModelConfig:
     middle_band: list[float] = field(default_factory=lambda: [0.25, 0.75])
     seed: int = 0
     batch_size: int = 16
+    chat_template_kwargs: dict = field(default_factory=dict)  # e.g. {enable_thinking: false} for GLM/Qwen3
 
 
 def load_config(path: str) -> ModelConfig:
@@ -68,6 +69,8 @@ def load_model(cfg: ModelConfig):
         cfg.model_id, dtype=DTYPES[cfg.dtype], device_map=cfg.device_map
     )
     model.eval()
+    # Read by format_prompts, so every caller formats prompts the same way for this model.
+    tokenizer.chat_template_kwargs = dict(cfg.chat_template_kwargs)
     return model, tokenizer
 
 
@@ -121,9 +124,10 @@ def format_prompts(tokenizer, user_messages: list[str]) -> list[str]:
     Note: no system message is passed, so the template's default system prompt (if any)
     is used. Olmo 3 Instruct inserts one ("You are a helpful function-calling AI assistant...").
     """
+    kwargs = getattr(tokenizer, "chat_template_kwargs", {})
     return [
         tokenizer.apply_chat_template(
-            [{"role": "user", "content": m}], tokenize=False, add_generation_prompt=True
+            [{"role": "user", "content": m}], tokenize=False, add_generation_prompt=True, **kwargs
         )
         for m in user_messages
     ]

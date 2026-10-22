@@ -117,3 +117,21 @@ Finding: per-entity variety is limited by the data — an e2 has only 2-6 r2 rel
 - Disk: /workspace quota ~50 GB, 48 GB used. GLM-4.7-Flash alone is 62.5 GB.
 - Batched vs single-item runs flip ~2% of near-tie answers: eligibility and experiments should use identical batching (or require a margin).
 - Chat-template kwargs (e.g. `enable_thinking=False` for GLM) are not yet supported by `format_prompts`.
+
+## 2026-10-22 (new pod: 1× A100 80GB, larger /workspace) — GLM-4.7-Flash (autonomous)
+
+**What was done:**
+- `HF_HOME=/workspace/.cache/huggingface` added to `/workspace/configs/.bashrc` (new pod didn't set it; configs repo change not committed).
+- `model.py`: config field `chat_template_kwargs` (passed to the chat template by `format_prompts`), used for `enable_thinking: false`. `configs/glm47_flash.yaml`.
+- `compute_directions.py`: added a no-ablation single-item reference (`correct_none`); `bridge_necessary` now requires it.
+- GLM smoke: 55.8 GiB GPU, 47 layers, hidden 2048, ~107 items/s recording all layers (batch 32). Template `[gMASK]<sop><|user|>…<|assistant|></think>`, no system prompt.
+- `MULTIHOP_TEST_MODEL=zai-org/GLM-4.7-Flash pytest tests/test_model.py` → 8 passed, 2 FAILED, 1 skipped. Failures are real and left as is:
+  ablating at the last 8 positions changes activations at *earlier* positions from layer 28 onward (rel. change 1e-4 at L28 growing to ~5% at the last layers; vs 15% at ablated positions); identical reruns are bit-identical; band starts at L12 with zero leak up to L27.
+  Most likely numerical (mixture-of-experts token grouping changes bf16 rounding), not causal. Implication: small late-layer differences between conditions in MoE models are partly noise.
+- `scripts/compute_eligibility.py --config configs/glm47_flash.yaml --items data/three_hop_eval_v2.parquet` (~15 min).
+
+**Results (GLM-4.7-Flash, eval v2, n = 3,000):** accuracy **11.5%** (95% CI 10.4–12.7%) vs null chance 7.1%; hop1 37.4%, hop2 52.7%, hop3 99.5%, all hops 23.0%; accuracy on all-hops-known items 21.2%.
+21% of answers are the first letter of e2 (bridge-letter shortcut). Eligible: 345 primary, 146 strict. Two-letter format 0.1%.
+GLM knows more hops than Olmo (23% vs 7% all hops) but composes them worse. Did not run M2 on GLM (user: switch model if accuracy very low).
+
+**Decision (user instruction):** switch to the most capable open model that fits the 80GB A100 in bf16. Chosen: `Qwen/Qwen3.8-27B` (dense, 55.6 GB; strongest small self-hostable model per web aggregators; dense avoids MoE noise). Alternative: `google/gemma-4-31B-it`. Caveat: screening judge (Qwen3-8B) is now the same family as an evaluated model.
