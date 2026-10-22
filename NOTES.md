@@ -94,3 +94,26 @@ Finding: per-entity variety is limited by the data — an e2 has only 2-6 r2 rel
 - **Disk quota on /workspace (~50 GB, 48 GB used)**: Llama download failed half-way (2/4 shards, partial files left in HF cache); Qwen3-8B judge put on ephemeral disk. Planned activation storage (~70–140 GB) will not fit. Needs user decision (free uv cache 11 GB / delete models / bigger volume).
 - Screening precision ~40% on a 25-fact spot check.
 - Very few probe-entity items are baseline_correct for Olmo (19) → per-entity probe evaluation on the eligible set will be thin for this model.
+
+## 2026-10-22 — M2 on Olmo 3 7B: sanity checks FAIL (handoff summary)
+
+**Bottom line:** For Olmo 3 7B, the spec's concept directions (and an entity-centred variant) do **not** pass the M2 sanity checks. Steering conveys entity *type*/attributes but never the entity name. Ablating the bridge (e2) direction hurts accuracy no more than ablating a random same-type entity's direction. The user has proposed moving to a more capable model (GLM-4.7-Flash); M3+ not started.
+
+**What was done:**
+- `.venv/bin/python scripts/compute_directions.py --config configs/olmo3_7b.yaml --items data/three_hop_eval_v2.parquet --pool data/three_hop_pool_v2.parquet`
+  → `results/allenai__Olmo-3-7B-Instruct/v2/{directions_e2.safetensors (not in git, 677 entities × 32 layers), steering_check.parquet, bridge_necessary.parquet/.json}`.
+- Diagnostics (scripts in `scripts/diagnostics/`, outputs in `results/allenai__Olmo-3-7B-Instruct/v2/diagnostics/`):
+  `steer_centered.py` (steering, original vs entity-centred directions, layers 10/16), `ablate_centred.py` (ablation specificity + no-ablation re-run), `readout.py` (does projection identify the true e2 in question activations; printed only).
+
+**Results (all on Olmo 3 7B, eval v2):**
+1. Concept directions share a large common component: mean pairwise cosine between different entities' directions = 0.55 at layer 16 (Lindsey baseline-word subtraction). Centring on the mean over the 677 entities removes it (cosine -0.001).
+2. Steering at layer 16 (and 10), 8 entities, added norm 0.5–4 × mean residual norm (18.5): **0/8 entities named at any scale**, for both direction types. Generations do shift towards the entity's type/attributes (Rowling/Le Guin → "her birth name", ExxonMobil → "world's largest company", id Software → "1992"); ≥ 2–4× breaks fluency.
+3. Ablation on the 431 baseline_correct items (one item at a time): no ablation 97.7% (10 items flip between batched and single runs — near-ties); e2 ablation, band [0.25, 0.75), last 8 positions: 86.8% vs same-type control 84.5% (spec directions) / 90.0% vs 89.8% (centred). Similar across all bands/positions tried. On the 80 confident items (p_target > 0.8): 100% under every ablation. On the strict set (68): no e2-specific drop. → **Sanity check "ablating e2 hurts, random same-type does not" fails.** `bridge_necessary` as defined = 18 items, not meaningful given the control.
+4. Readout: true e2 ranks at ~0.8–0.9 percentile among all 677 directions at many layers/positions, but only ~0.6–0.8 among same-type entities (best ~0.8 at layers 24–31 at the position after `<|im_end|>`), and already ~0.7 at layer 4–8, so partly lexical/e1-driven. Weak evidence that e2 is linearly visible, not conclusive (e1/e3 confounds not controlled).
+
+**Interpretation (belief, not verified):** Most Olmo "correct" answers are likely guesses (accuracy 14.4% vs chance 8.7%), so there may be little bridge computation to disrupt; and "Tell me about X" directions may not match how X is represented as a latent intermediate. A more capable model separates these explanations.
+
+**Needs user attention first:**
+- Disk: /workspace quota ~50 GB, 48 GB used. GLM-4.7-Flash alone is 62.5 GB.
+- Batched vs single-item runs flip ~2% of near-tie answers: eligibility and experiments should use identical batching (or require a margin).
+- Chat-template kwargs (e.g. `enable_thinking=False` for GLM) are not yet supported by `format_prompts`.
