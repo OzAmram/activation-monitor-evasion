@@ -12,6 +12,7 @@ import torch
 from multihop.model import (
     ModelConfig,
     ablate_direction,
+    hidden_size,
     add_direction,
     get_layers,
     greedy_generate,
@@ -83,20 +84,22 @@ def test_record_matches_hidden_states(mt, prompts):
     model, tok = mt
     n = len(get_layers(model))
     rec = record(model, tok, prompts, k=K)
-    assert rec.acts.shape == (len(prompts), n, K, model.config.hidden_size)
+    assert rec.acts.shape == (len(prompts), n, K, hidden_size(model))
     assert rec.acts.device.type == "cpu"
 
-    batch = tokenize(tok, prompts, model.device)
-    with torch.no_grad():
-        hs = model(**batch, output_hidden_states=True, use_cache=False).hidden_states
-    # hidden_states[i + 1] is the output of layer i, except the last entry, which HF returns
-    # after the final norm; so compare all but the last layer exactly.
-    for i in range(n - 1):
-        assert torch.equal(rec.acts[:, i], hs[i + 1][:, -K:].cpu()), f"layer {i}"
-    final_norm = model.model.norm
-    with torch.no_grad():
-        normed = final_norm(rec.acts[:, n - 1].to(model.device)).cpu()
-    assert torch.equal(normed, hs[n][:, -K:].cpu())
+    # Reference: unpadded single-prompt forward passes (record batches by equal length, without padding;
+    # padded batches are not exact for every architecture, e.g. linear attention in Qwen3.5/3.8).
+    inner = getattr(model.model, "language_model", model.model)
+    for j, p in enumerate(prompts):
+        with torch.no_grad():
+            hs = model(**tokenize(tok, [p], model.device), output_hidden_states=True, use_cache=False).hidden_states
+        # hidden_states[i + 1] is the output of layer i, except the last entry, which HF returns
+        # after the final norm; so compare all but the last layer exactly.
+        for i in range(n - 1):
+            assert torch.equal(rec.acts[j, i], hs[i + 1][0, -K:].cpu()), f"prompt {j} layer {i}"
+        with torch.no_grad():
+            normed = inner.norm(rec.acts[j, n - 1].to(model.device)).cpu()
+        assert torch.equal(normed, hs[n][0, -K:].cpu())
 
     # Read tokens are the last K real tokens of each prompt.
     for row, p in zip(rec.read_tokens, prompts):
@@ -157,7 +160,7 @@ def test_ablation_projects_out_direction(mt, prompts):
     model, tok = mt
     n = len(get_layers(model))
     g = torch.Generator().manual_seed(0)
-    d = torch.randn(model.config.hidden_size, generator=g)
+    d = torch.randn(hidden_size(model), generator=g)
     d_unit = d / d.norm()
     band = layers_in_band([0.25, 0.75], n)
 
@@ -187,7 +190,7 @@ def test_ablation_per_layer_dict(mt, prompts):
     model, tok = mt
     g = torch.Generator().manual_seed(1)
     layers = [2, 4]
-    dirs = {l: torch.randn(model.config.hidden_size, generator=g) for l in layers}
+    dirs = {l: torch.randn(hidden_size(model), generator=g) for l in layers}
     with ablate_direction(model, dirs, layers, k=K):
         rec = record(model, tok, prompts, k=K, layers=layers)
     for j, l in enumerate(layers):
@@ -199,7 +202,7 @@ def test_ablation_per_layer_dict(mt, prompts):
 def test_ablation_with_left_padding(mt, prompts):
     model, tok = mt
     n = len(get_layers(model))
-    d = torch.randn(model.config.hidden_size, generator=torch.Generator().manual_seed(2))
+    d = torch.randn(hidden_size(model), generator=torch.Generator().manual_seed(2))
     band = layers_in_band([0.25, 0.75], n)
     with ablate_direction(model, d, band, k=K):
         batched = record(model, tok, prompts, k=K)
@@ -214,7 +217,7 @@ def test_ablation_with_left_padding(mt, prompts):
 def test_steering_adds_vector(mt, prompts):
     model, tok = mt
     layer = 3
-    d = torch.randn(model.config.hidden_size, generator=torch.Generator().manual_seed(3))
+    d = torch.randn(hidden_size(model), generator=torch.Generator().manual_seed(3))
     clean = record(model, tok, prompts, k=K, layers=[layer])
     with add_direction(model, d, layer, scale=4.0):
         steered = record(model, tok, prompts, k=K, layers=[layer, layer + 1])
@@ -232,7 +235,7 @@ def _n_hooks(model):
 
 def test_hooks_removed_even_on_exception(mt, prompts):
     model, tok = mt
-    d = torch.randn(model.config.hidden_size)
+    d = torch.randn(hidden_size(model))
     # transformers 5 permanently installs its own output-capturing hook per layer the first time
     # output_hidden_states=True is used, so count relative to what is present now.
     base = _n_hooks(model)

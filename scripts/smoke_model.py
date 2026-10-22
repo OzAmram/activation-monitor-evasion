@@ -8,7 +8,7 @@ import time
 
 import torch
 
-from multihop.model import format_prompts, get_layers, greedy_generate, load_config, load_model, record, resolve_store_layers
+from multihop.model import format_prompts, get_layers, hidden_size, greedy_generate, load_config, load_model, record, resolve_store_layers
 
 QUESTIONS = [
     "What is the first letter of the capital of the country where the Eiffel Tower is located? "
@@ -33,7 +33,7 @@ def main():
     load_s = time.time() - t0
     n = len(get_layers(model))
     print(f"model {cfg.model_id}: load {load_s:.1f}s, GPU mem allocated {torch.cuda.memory_allocated() / 2**30:.2f} GiB, "
-          f"n_layers {n}, hidden {model.config.hidden_size}, param devices {sorted({str(p.device) for p in model.parameters()})}")
+          f"n_layers {n}, hidden {hidden_size(model)}, param devices {sorted({str(p.device) for p in model.parameters()})}")
 
     prompts = format_prompts(tok, QUESTIONS)
     print("\nFull formatted prompt 0:\n" + repr(prompts[0]))

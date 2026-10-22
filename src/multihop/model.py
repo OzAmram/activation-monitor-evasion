@@ -75,14 +75,23 @@ def load_model(cfg: ModelConfig):
 
 
 def get_layers(model) -> torch.nn.ModuleList:
-    """Decoder layers of a standard HF causal LM (`model.model.layers`). Fails loudly otherwise."""
-    layers = getattr(getattr(model, "model", None), "layers", None)
+    """Decoder layers of a standard HF causal LM (`model.model.layers`), or of the text model inside a
+    multimodal wrapper (`model.model.language_model.layers`, e.g. Qwen3.5/3.8). Fails loudly otherwise."""
+    inner = getattr(model, "model", None)
+    layers = getattr(inner, "layers", None)
+    if layers is None:
+        layers = getattr(getattr(inner, "language_model", None), "layers", None)
     if not isinstance(layers, torch.nn.ModuleList):
         raise ValueError(
             f"Cannot find decoder layers at model.model.layers for {type(model).__name__}; "
             "add support for this architecture in get_layers()."
         )
     return layers
+
+
+def hidden_size(model) -> int:
+    """Residual-stream width; reads the text config for multimodal wrappers."""
+    return model.config.get_text_config().hidden_size
 
 
 def n_layers(model) -> int:
@@ -174,14 +183,50 @@ class Recording:
     topk_logprobs: torch.Tensor  # [batch, topk] float32
 
 
-@torch.no_grad()
-def record(model, tokenizer, prompts: list[str], k: int, layers: list[int] | None = None, topk: int = 10) -> Recording:
-    """Run one forward pass on a batch of formatted prompts.
+def _length_batches(tokenizer, prompts: list[str], batch_size: int | None) -> list[list[int]]:
+    """Indices grouped by exact token length (so no batch needs padding), chunked to batch_size.
+    Padding is avoided because it measurably changes activations in some architectures
+    (e.g. linear-attention layers in Qwen3.5/3.8), and makes results depend on batch composition."""
+    lengths = [len(tokenizer(p, add_special_tokens=False)["input_ids"]) for p in prompts]
+    groups: dict[int, list[int]] = {}
+    for i, n in enumerate(lengths):
+        groups.setdefault(n, []).append(i)
+    bs = batch_size or len(prompts)
+    return [g[s:s + bs] for g in groups.values() for s in range(0, len(g), bs)]
+
+
+def record(model, tokenizer, prompts: list[str], k: int, layers: list[int] | None = None, topk: int = 10,
+           batch_size: int | None = None) -> Recording:
+    """Forward passes over formatted prompts, batched by equal token length (no padding), in input order.
 
     Records the residual stream (output of each layer in `layers`, default all) at the last
     `k` prompt tokens, plus next-token logits at the last position. Interventions
     (ablate_direction / add_direction) active around this call are applied.
     """
+    parts, order = [], []
+    for idx in _length_batches(tokenizer, prompts, batch_size):
+        parts.append(_record_batch(model, tokenizer, [prompts[i] for i in idx], k, layers, topk))
+        order += idx
+    inv = torch.argsort(torch.tensor(order))
+    cat = lambda xs: torch.cat(xs)[inv]
+    def lst(xs):
+        flat = [x for part in xs for x in part]
+        return [flat[i] for i in inv.tolist()]
+    return Recording(
+        acts=cat([r.acts for r in parts]),
+        layers=parts[0].layers,
+        read_tokens=lst([r.read_tokens for r in parts]),
+        next_token_ids=cat([r.next_token_ids for r in parts]),
+        next_tokens=lst([r.next_tokens for r in parts]),
+        last_logits=cat([r.last_logits for r in parts]),
+        topk_ids=cat([r.topk_ids for r in parts]),
+        topk_logprobs=cat([r.topk_logprobs for r in parts]),
+    )
+
+
+@torch.no_grad()
+def _record_batch(model, tokenizer, prompts: list[str], k: int, layers: list[int] | None, topk: int) -> Recording:
+    """One forward pass on a batch of formatted prompts (see `record`)."""
     all_layers = get_layers(model)
     layers = list(range(len(all_layers))) if layers is None else list(layers)
     batch = tokenize(tokenizer, prompts, _input_device(model))
@@ -221,12 +266,21 @@ def record(model, tokenizer, prompts: list[str], k: int, layers: list[int] | Non
     )
 
 
-@torch.no_grad()
-def greedy_generate(model, tokenizer, prompts: list[str], max_new_tokens: int = 16) -> list[str]:
-    """Greedy decoding of a short answer for each formatted prompt. Returns only the new text.
+def greedy_generate(model, tokenizer, prompts: list[str], max_new_tokens: int = 16, batch_size: int | None = None) -> list[str]:
+    """Greedy decoding of a short answer for each formatted prompt, batched by equal token length
+    (no padding), in input order. Returns only the new text.
 
     Overrides the model's generation config (Olmo 3 defaults to sampling) with do_sample=False.
     """
+    out = [None] * len(prompts)
+    for idx in _length_batches(tokenizer, prompts, batch_size):
+        for i, text in zip(idx, _generate_batch(model, tokenizer, [prompts[i] for i in idx], max_new_tokens)):
+            out[i] = text
+    return out
+
+
+@torch.no_grad()
+def _generate_batch(model, tokenizer, prompts: list[str], max_new_tokens: int) -> list[str]:
     batch = tokenize(tokenizer, prompts, _input_device(model))
     del batch["position_ids"]  # generate() derives positions from the attention mask
     out = model.generate(

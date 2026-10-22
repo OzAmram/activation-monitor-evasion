@@ -70,24 +70,11 @@ def names_match(output: str, aliases: list[str]) -> bool:
     return any(len(a) >= 3 and f" {' '.join(_norm(a).split())} " in out for a in aliases)
 
 
-def _batched(fn, prompts, batch_size):
-    res = []
-    for s in range(0, len(prompts), batch_size):
-        res += fn(prompts[s:s + batch_size])
-    return res
-
-
 def letter_answers(model, tok, questions: list[str], batch_size: int):
     """Greedy first token + letter distribution at the answer position, for each question."""
-    letter_ids = letter_token_ids(tok)
-    next_tokens, probs, masses = [], [], []
-    for s in range(0, len(questions), batch_size):
-        rec = record(model, tok, format_prompts(tok, questions[s:s + batch_size]), k=1, layers=[0])
-        p, m = letter_probs(rec.last_logits, letter_ids)
-        next_tokens += rec.next_tokens
-        probs.append(p)
-        masses.append(m)
-    return next_tokens, np.concatenate(probs), np.concatenate(masses)
+    rec = record(model, tok, format_prompts(tok, questions), k=1, layers=[0], batch_size=batch_size)
+    p, m = letter_probs(rec.last_logits, letter_token_ids(tok))
+    return rec.next_tokens, p, m
 
 
 def compute_eligibility(model, tok, items: pd.DataFrame, batch_size: int, seed: int) -> pd.DataFrame:
@@ -110,19 +97,18 @@ def compute_eligibility(model, tok, items: pd.DataFrame, batch_size: int, seed: 
         tgt = [letters.index(l) for l in items["letter"][has]]
         out.loc[has, "chance_p_target"] = nprobs[np.arange(has.sum()), tgt]
 
-    gen = lambda qs: greedy_generate(model, tok, format_prompts(tok, qs), max_new_tokens=24)
+    gen = lambda qs: greedy_generate(model, tok, format_prompts(tok, qs), max_new_tokens=24, batch_size=batch_size)
 
     # Secondary first+last-letter format, only where it is well-defined (ok_fl).
     fl = items["ok_fl"].to_numpy()
     out["fl_output"], out["fl_correct"] = None, pd.NA
     if fl.any():
-        gen_fl = lambda qs: greedy_generate(model, tok, format_prompts(tok, qs), max_new_tokens=6)
-        o = _batched(gen_fl, items.loc[fl, "question_fl"].tolist(), batch_size)
+        o = greedy_generate(model, tok, format_prompts(tok, items.loc[fl, "question_fl"].tolist()), max_new_tokens=6, batch_size=batch_size)
         out.loc[fl, "fl_output"] = o
         out.loc[fl, "fl_correct"] = [grade_fl(x, a + b) for x, a, b in zip(o, items.loc[fl, "letter"], items.loc[fl, "letter_last"])]
-    h1 = _batched(gen, [HOP_QUESTION.format(np=x) for x in items["np1"]], batch_size)
-    h2 = _batched(gen, [HOP_QUESTION.format(np=x) for x in items["np2"]], batch_size)
-    h3 = _batched(gen, [LETTER_QUESTION.format(name=x) for x in items["e3"]], batch_size)
+    h1 = gen([HOP_QUESTION.format(np=x) for x in items["np1"]])
+    h2 = gen([HOP_QUESTION.format(np=x) for x in items["np2"]])
+    h3 = gen([LETTER_QUESTION.format(name=x) for x in items["e3"]])
     out["hop1_output"], out["hop2_output"], out["hop3_output"] = h1, h2, h3
     out["hop1_known"] = [names_match(o, a) for o, a in zip(h1, items["e2_aliases"])]
     out["hop2_known"] = [names_match(o, a) for o, a in zip(h2, items["e3_aliases"])]

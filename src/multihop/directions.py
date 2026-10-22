@@ -24,11 +24,8 @@ def load_baseline_words(path: str | Path) -> list[str]:
 @torch.no_grad()
 def last_token_acts(model, tok, names: list[str], layers: list[int], batch_size: int) -> torch.Tensor:
     """[n, n_layers, hidden] float32 residual at the last prompt token of "Tell me about {x}"."""
-    out = []
-    for s in range(0, len(names), batch_size):
-        prompts = format_prompts(tok, [DIRECTION_PROMPT.format(x=x) for x in names[s:s + batch_size]])
-        out.append(record(model, tok, prompts, k=1, layers=layers).acts[:, :, 0, :].float())
-    return torch.cat(out)
+    prompts = format_prompts(tok, [DIRECTION_PROMPT.format(x=x) for x in names])
+    return record(model, tok, prompts, k=1, layers=layers, batch_size=batch_size).acts[:, :, 0, :].float()
 
 
 def concept_vectors(model, tok, names: list[str], baseline_words: list[str], layers: list[int], batch_size: int) -> torch.Tensor:
