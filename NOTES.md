@@ -47,3 +47,24 @@ Manual inspection of samples: questions read correctly; alias drops are a mix of
 **Open questions / known problems:** see README Decisions (alias strictness, shortcut coverage, wrong-e2-candidate check). Final evaluation subset size not decided (28k × all conditions × paraphrases is too much to record at all layers).
 
 **Next steps:** decide evaluation subset + sampling; chance-baseline null prompts (needs same-type replacement e1); e2/e3 type phrases for instructions.
+
+## 2026-10-22 — M0 model infrastructure (background agent) + M1 evaluation subset
+
+**What was done:**
+- Model layer (`src/multihop/model.py`, `configs/olmo3_7b.yaml`, `tests/test_model.py`, `scripts/smoke_model.py`), written by a sub-agent, reviewed and committed (ec2226f).
+  Re-ran myself: `.venv/bin/python -m pytest tests/` → 19 passed (Qwen 0.5B for model tests).
+  Agent-reported on Olmo 3 7B (not re-run by me): 32 layers, hidden 4096, 13.6 GiB GPU, ~98 items/s recording all layers at batch 16-64, 2.0 MiB/item (8 positions, all layers, bf16).
+  Olmo 3 inserts a default system prompt ("You are a helpful function-calling AI assistant...") — kept for now.
+  Last 8 prompt tokens are `the letter . <|im_end|> \n <|im_start|> assistant \n` (5 template tokens).
+  Olmo answered 3/3 example questions with a single letter, all wrong — each time the first letter of the hop-1 entity or a prompt word (France→F, California→C). Supports the e1/e2 letter-collision filter.
+  Note: the agent raised the bf16 batched-vs-single tolerance from 2e-2 to 5e-2 after a failure at 0.0201; it first measured bf16-vs-fp32 error of a single prompt at the same size (0.021) and added a strict fp32 test (1e-4) as the correctness check.
+- `sample_eval_set` in `data.py` + `scripts/sample_eval_set.py`: 3,000-item evaluation subset (user approved 3k).
+  `.venv/bin/python scripts/sample_eval_set.py --pool data/three_hop_pool_v1.parquet --out data/three_hop_eval_v1.parquet` (defaults: 40 probe entities × 10 items, ≥3 distinct e3 per entity, ≤10 entities per e2 type, ≤40 random items per relation pair, seed 0).
+
+**Results:** 3,000 items (1,300 random + ~200 probe-entity items per source), 191 relation pairs, 1,753 distinct e2.
+Finding: per-entity variety is limited by the data — an e2 has only 2-6 r2 relations, so at most ~3-6 distinct answers. Without the ≥3-distinct-e3 requirement most probe entities had a single answer for all items (e2 probe confounded with e3).
+
+**Open questions / known problems:**
+- Source noise: Hopping Too Late inherits bad Wikidata facts (e.g. "Ralph Lauren Corporation founded by Latvia"). A type-frequency heuristic flags ~400/11,889 kept HTL items but mostly real facts, so no filter added.
+- Time-varying relations (head of state, CEO, president) — ~140 eval items as r2, ~120 as r1. Ground truth is a 2024 snapshot. Asked user whether to drop.
+- User idea: second answer format with first + last letter. Pros/cons given to user; not implemented yet.

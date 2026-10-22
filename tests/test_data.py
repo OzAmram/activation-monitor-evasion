@@ -104,3 +104,17 @@ def test_real_data_kept_questions_never_name_bridge_or_answer():
         assert not mentions(r.question, r.e2_aliases + r.e3_aliases), r.item_id
         assert r.question.endswith("Answer immediately with only the letter.")
         assert " is?" not in r.question
+
+
+@pytest.mark.skipif(not (RAW / "TwoHopFact").exists(), reason="raw data not downloaded")
+def test_sample_eval_set_properties():
+    from multihop.data import sample_eval_set
+    pool = apply_filters(load_all(RAW))
+    ev = sample_eval_set(pool, 3000, 40, 10, 3, 10, 40, seed=0)
+    assert len(ev) == 3000 and ev["item_id"].is_unique and ev["keep"].all()
+    probe = ev[ev["probe_entity"]]
+    assert probe.groupby("e2_qid").size().eq(10).all() and probe["e2_qid"].nunique() == 40
+    assert probe.groupby("e2_qid")["e3_qid"].nunique().min() >= 3
+    assert ev[~ev["probe_entity"]].groupby(["source", "r1", "r2"]).size().max() <= 40
+    # Deterministic given the seed.
+    assert ev["item_id"].tolist() == sample_eval_set(pool, 3000, 40, 10, 3, 10, 40, seed=0)["item_id"].tolist()

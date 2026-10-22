@@ -124,6 +124,43 @@ def _finish(df: pd.DataFrame) -> pd.DataFrame:
     return df[COLUMNS].reset_index(drop=True)
 
 
+def sample_eval_set(pool: pd.DataFrame, n_total: int, n_probe_entities: int, per_entity: int, min_distinct_e3: int,
+                    max_entities_per_type: int, max_per_relation_pair: int, seed: int) -> pd.DataFrame:
+    """Fixed evaluation subset of kept items (model-independent).
+
+    1. Probe entities: e2 entities with >= per_entity kept items and >= min_distinct_e3 distinct
+       e3 (with distinct letters), so an e2 signal is not tied to a single answer entity. Most
+       frequent first, at most max_entities_per_type per e2_type. per_entity items each, spread
+       evenly over the entity's e3 values (round robin). Marked `probe_entity` = True.
+    2. The rest: random items, half from each source. A random item is only added while its
+       (source, r1, r2) pair has fewer than max_per_relation_pair items in total; probe-entity
+       items count towards this but are not themselves capped.
+    """
+    kept = pool[pool["keep"]]
+    counts = kept.groupby("e2_qid").agg(n=("item_id", "size"), e2_type=("e2_type", "first"),
+                                        ne3=("e3_qid", "nunique"), nletters=("letter", "nunique"))
+    counts = counts[(counts["n"] >= per_entity) & (counts["ne3"] >= min_distinct_e3) & (counts["nletters"] >= min_distinct_e3)]
+    counts = counts.sort_values("n", ascending=False, kind="stable")
+    entities = counts.groupby("e2_type", sort=False).head(max_entities_per_type).head(n_probe_entities).index
+    if len(entities) < n_probe_entities:
+        raise ValueError(f"Only {len(entities)} probe entities available, wanted {n_probe_entities}")
+    cand = kept[kept["e2_qid"].isin(entities)].sample(frac=1, random_state=seed)
+    cand = cand.assign(_rr=cand.groupby(["e2_qid", "e3_qid"]).cumcount())  # round-robin rank within each e3
+    probe = cand.sort_values("_rr", kind="stable").groupby("e2_qid").head(per_entity).drop(columns="_rr")
+
+    rest = kept.drop(probe.index).sample(frac=1, random_state=seed)
+    pair = ["source", "r1", "r2"]
+    already = probe.groupby(pair).size()
+    rank = rest.groupby(pair).cumcount() + rest.set_index(pair).index.map(already).fillna(0).astype(int).values
+    rest = rest[rank < max_per_relation_pair]
+    n_rest = n_total - len(probe)
+    picked = [rest[rest["source"] == s].head(n_rest // 2 + (i < n_rest % 2)) for i, s in enumerate(sorted(rest["source"].unique()))]
+    out = pd.concat([probe.assign(probe_entity=True)] + [p.assign(probe_entity=False) for p in picked])
+    if len(out) != n_total:
+        raise ValueError(f"Sampled {len(out)} items, wanted {n_total}")
+    return out.sort_values("item_id").reset_index(drop=True)
+
+
 def load_all(raw_dir: Path) -> pd.DataFrame:
     raw_dir = Path(raw_dir)
     return pd.concat([
