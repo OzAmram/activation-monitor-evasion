@@ -151,3 +151,39 @@ GLM knows more hops than Olmo (23% vs 7% all hops) but composes them worse. Did 
 hop1 28.2%, hop2 43.4%, hop3 100%; all hops 15.7%; **accuracy on all-hops-known items 48.5%**. Bridge-letter answers 12% (GLM 21%).
 Eligible: **697 primary, 229 strict**; 48/300 probe-entity items correct. Two-letter format 0.5% (not useful for any model so far).
 Comparison: Olmo 3 7B 14.4% (chance 8.7%), GLM-4.7-Flash 11.5% (chance 7.1%). Qwen3.8-27B is the working model from here on.
+
+## 2026-10-22 — M2 on Qwen3.8-27B: sanity checks FAIL again (handoff summary)
+
+**Bottom line:** Qwen3.8-27B is a usable model (23% accuracy, 2.2× chance, 697 eligible items), but the spec's
+concept directions still fail both M2 sanity checks, as on Olmo. Ablating the bridge entity's direction hurts no
+more than ablating a random same-type entity's direction, and steering makes the model talk about the entity's
+attributes but (almost) never name it. Also fails with entity-centred directions. Stopped here instead of adding
+more variants: the next step is a design decision for the user.
+
+**What was done:**
+- `scripts/compute_directions.py --config configs/qwen38_27b.yaml --items data/three_hop_eval_v2.parquet --pool data/three_hop_pool_v2.parquet`
+  → `results/Qwen__Qwen3.8-27B/v2/{directions_e2.safetensors (989 entities × 64 layers; not in git), steering_check.parquet, bridge_necessary.parquet/.json}` (~25 min).
+- `scripts/diagnostics/ablate_centred_generic.py configs/qwen38_27b.yaml` → `results/Qwen__Qwen3.8-27B/v2/diagnostics/{ablate_centred,steer_centred}.parquet` (~20 min).
+
+**Results (Qwen3.8-27B):**
+- Directions share a common component: mean pairwise cosine 0.57 at layer 32 (spec/Lindsey); 0.002 after entity-centring.
+- No-ablation single-item re-run: 98.0% of the 697 baseline_correct items stay correct (equal-length batches still round differently from batch size 1).
+- Accuracy after ablation (697 items), e2 vs same-type control:
+  band [0.25,0.75) last 8 positions 82.9% vs 84.5%; all positions 78.2% vs 78.8%; [0.25,0.5) all 83.4% vs 81.1%; [0.5,0.75) all 87.8% vs 88.4%;
+  all layers 2–6% for both (ablating the shared component everywhere destroys the model).
+  Centred directions (684 items correct without ablation): last 8 positions 83.7% vs 84.5%; all positions 74.4% vs 76.0%.
+  `bridge_necessary` as defined = 49 items, but with no e2-specific effect in aggregate this mostly reflects noise.
+- Steering at layer 32 (mean residual norm 74.7): spec directions name the entity 1/8 at 2× (Portugal), 0 otherwise; centred 0/8 at all scales.
+  Texts are entity-specific in content (Debney → "I was a composer", id Software → "dreaming for 30 years… pizza", Le Guin → Chinese text about writing darkness and light).
+
+**Interpretation (belief, not verified):** a rank-1 "Tell me about X" direction is not the (only) way the bridge entity is
+represented during the hop, so removing it doesn't stop the computation; and the spec's directions mostly encode a
+generic "entity" component. This does not by itself mean monitors can't detect e2 — probes (M3) are a separate test.
+
+**Options for the user (not started):**
+1. Proceed to M3 (probes trained on independent text) — the spec's monitors don't depend on M2 passing, and the
+   "e2 probe detects e2 above chance" sanity check is the more relevant one for the research question.
+2. Replace the bridge_necessary ablation with a different causal test, e.g. activation patching (swap in activations
+   from a question with a different e1 that leads to a different e2 and check whether the answer follows), or
+   multi-direction / subspace ablation (e.g. the top principal directions of the entity's activations).
+3. Use contextual directions (mean activation on questions whose bridge is X minus same-type others) instead of "Tell me about X".
