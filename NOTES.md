@@ -135,3 +135,19 @@ Finding: per-entity variety is limited by the data — an e2 has only 2-6 r2 rel
 GLM knows more hops than Olmo (23% vs 7% all hops) but composes them worse. Did not run M2 on GLM (user: switch model if accuracy very low).
 
 **Decision (user instruction):** switch to the most capable open model that fits the 80GB A100 in bf16. Chosen: `Qwen/Qwen3.8-27B` (dense, 55.6 GB; strongest small self-hostable model per web aggregators; dense avoids MoE noise). Alternative: `google/gemma-4-31B-it`. Caveat: screening judge (Qwen3-8B) is now the same family as an evaluated model.
+
+## 2026-10-22 — Qwen3.8-27B (autonomous, continued)
+
+**What was done:**
+- Model choice: web search for strongest open model fitting 1× A100 80GB in bf16 (no FP8 on A100). Candidates checked on HF: `Qwen/Qwen3.8-27B` (dense, 55.6 GB), `google/gemma-4-31B-it`, `Qwen/Qwen3.6-35B-A3B` (71.9 GB MoE, tight). Chose Qwen3.8-27B. Sources: respan.ai, fireworks.ai, computingforgeeks.com, github.com/xigh/open-weight-models (aggregator numbers, different harnesses).
+- Architecture: multimodal wrapper (`Qwen3_5ForConditionalGeneration`), 64 text layers, hidden 5120, 3 of every 4 layers linear attention (gated delta rule), every 4th full attention. Fast kernels (`flash-linear-attention`, `causal_conv1d`) not installed → PyTorch fallback (~34 items/s recording all layers). Not installed to avoid environment changes; could speed things up.
+- Smoke (`scripts/smoke_model.py configs/qwen38_27b.yaml`): 50.1 GiB GPU; **3/3 example questions correct** (P, S, T) with p > 0.94. With thinking disabled the prompt ends `<|im_start|>assistant\n<think>\n\n</think>\n\n`, so **all K=8 read positions are template tokens** (no question tokens). Kept K=8 for now; "all positions" ablation variants cover earlier tokens.
+- **Padding problem found:** left-padded batches changed Qwen3.8 activations by up to 5.9% relative (growing with amount of padding: 0 pad → 1.6%, 8 → 3.8%, 30 → 5.9%). Fix: `record`/`greedy_generate` now batch prompts by exact token length (no padding), in input order; callers pass whole lists + `batch_size`. Batched vs single is now bit-identical. This also removes the Olmo near-tie batching flips for future runs (Olmo/GLM results above were computed with padded batches).
+- `get_layers` / new `hidden_size()` support multimodal wrappers. `test_record_matches_hidden_states` now uses unpadded single-prompt references (still exact equality).
+- Tests: Qwen3.8 `tests/test_model.py` 10 passed, 1 skipped (fp32 test, too large); small model 11 passed.
+- `scripts/compute_eligibility.py --config configs/qwen38_27b.yaml --items data/three_hop_eval_v2.parquet` → `results/Qwen__Qwen3.8-27B/v2/eligibility.*` (no-padding batching).
+
+**Results (Qwen3.8-27B, eval v2, n = 3,000):** accuracy **23.2%** (95% CI 21.8–24.7%) vs null chance 10.4% (9.8–11.0%); TwoHopFact 26.9%, Hopping Too Late 19.5%.
+hop1 28.2%, hop2 43.4%, hop3 100%; all hops 15.7%; **accuracy on all-hops-known items 48.5%**. Bridge-letter answers 12% (GLM 21%).
+Eligible: **697 primary, 229 strict**; 48/300 probe-entity items correct. Two-letter format 0.5% (not useful for any model so far).
+Comparison: Olmo 3 7B 14.4% (chance 8.7%), GLM-4.7-Flash 11.5% (chance 7.1%). Qwen3.8-27B is the working model from here on.
