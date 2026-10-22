@@ -29,3 +29,21 @@ Script: `/tmp/claude-0/.../scratchpad/smoke.py` (temporary; to be turned into a 
 - Target models go up to GLM 5.3 (near-frontier open weights) → backend must scale beyond `device_map="auto"` eventually.
 - Added `UV_CACHE_DIR` / `UV_LINK_MODE` to `/workspace/configs/.bashrc` (that configs repo change is not committed).
 - Git repo initialised, remote `git@github.com:OzAmram/activation-monitor-evasion.git` (push works via forwarded SSH agent).
+
+## 2026-10-22 — M1 datasets (part 1: item pool)
+
+**Goal:** Load TwoHopFact + Hopping Too Late, build three-hop letter questions, apply model-independent filters.
+
+**What was done:**
+- Sources (pinned): `soheeyang/TwoHopFact` @ 59a84cd (HF dataset, 45,595 items); `edenbiran/HoppingTooLate` @ 6c4b43e (GitHub, `datasets/two_hop.csv`, 82,020 rows). Raw copies in `data/raw/` (gitignored).
+- `src/multihop/data.py` (loading, question construction, `first_letter`, `grade`), `src/multihop/filtering.py` (filters as boolean columns + `keep`, `drop_reason`), `scripts/build_dataset.py`, `tests/test_data.py`.
+- Command: `.venv/bin/python scripts/build_dataset.py --version v1` → `data/three_hop_pool_v1.parquet` (all rows + filter columns) and `data/three_hop_pool_v1.json` (counts).
+- Tests: `.venv/bin/python -m pytest tests/test_data.py` → 8 passed (includes the Oregon/Salem shortcut-collision case and a check over all kept real questions that none names e2/e3 or their aliases).
+
+**Results:** 127,615 rows → **28,259 kept** (TwoHopFact 16,370; Hopping Too Late 11,889). First failing filter: aliases 55,672; unique bridge/answer 32,970; collision 5,921; letter undefined 2,954; duplicate 1,302; names e2/e3 432; degenerate 105.
+Kept items: 8,544 distinct e2; 533 e2 appear in ≥10 items (e.g. France 421, Stephen King 149). Letters fairly spread (top: C 9.1%, M 8.8%, J 7.1%).
+Manual inspection of samples: questions read correctly; alias drops are a mix of genuinely ambiguous (Lewis Carroll / Charles Dodgson) and over-strict (titles like "Sir Jonathan Pryce").
+
+**Open questions / known problems:** see README Decisions (alias strictness, shortcut coverage, wrong-e2-candidate check). Final evaluation subset size not decided (28k × all conditions × paraphrases is too much to record at all layers).
+
+**Next steps:** decide evaluation subset + sampling; chance-baseline null prompts (needs same-type replacement e1); e2/e3 type phrases for instructions.

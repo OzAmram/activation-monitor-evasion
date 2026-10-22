@@ -1,0 +1,37 @@
+{
+  "version": "v1",
+  "sources": {
+    "twohopfact": {
+      "repo": "soheeyang/TwoHopFact",
+      "revision": "59a84cd883f71641a03fb6fa50da92a9603e7845"
+    },
+    "hoppingtoolate": {
+      "repo": "https://github.com/edenbiran/HoppingTooLate",
+      "revision": "6c4b43e084a71a83df0bf2cb3a0c0f1b5d4be420"
+    }
+  },
+  "n_total": 127615,
+  "n_kept": 28259,
+  "kept_by_source": {
+    "hoppingtoolate": 11889,
+    "twohopfact": 16370
+  },
+  "first_failing_filter": {
+    "ok_aliases": 55672,
+    "ok_unique": 32970,
+    "ok_collision": 5921,
+    "ok_letter": 2954,
+    "ok_dedup": 1302,
+    "ok_wellformed": 432,
+    "ok_distinct": 105
+  },
+  "failing_each_filter": {
+    "ok_letter": 2954,
+    "ok_distinct": 105,
+    "ok_unique": 34127,
+    "ok_aliases": 75899,
+    "ok_collision": 20441,
+    "ok_wellformed": 2273,
+    "ok_dedup": 6405
+  }
+}
