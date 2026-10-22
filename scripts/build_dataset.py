@@ -10,6 +10,8 @@ import argparse
 import json
 from pathlib import Path
 
+import pandas as pd
+
 from multihop.data import load_all
 from multihop.filtering import FILTERS, apply_filters
 
@@ -24,9 +26,11 @@ def main():
     p.add_argument("--raw-dir", default="data/raw")
     p.add_argument("--out-dir", default="data")
     p.add_argument("--version", required=True)
+    p.add_argument("--screen", default=None, help="screening scores from scripts/screen_facts.py (adds ok_screen filter)")
     args = p.parse_args()
 
-    df = apply_filters(load_all(Path(args.raw_dir)))
+    screen = pd.read_parquet(args.screen) if args.screen else None
+    df = apply_filters(load_all(Path(args.raw_dir)), screen=screen)
     df["dataset_version"] = args.version
     out = Path(args.out_dir) / f"three_hop_pool_{args.version}.parquet"
     df.to_parquet(out, index=False)
@@ -38,7 +42,8 @@ def main():
         "n_kept": int(df["keep"].sum()),
         "kept_by_source": df[df["keep"]].groupby("source").size().to_dict(),
         "first_failing_filter": df["drop_reason"].value_counts().to_dict(),
-        "failing_each_filter": {f: int((~df[f]).sum()) for f in FILTERS},
+        "screen": args.screen,
+        "failing_each_filter": {f: int((~df[f]).sum()) for f in FILTERS + (["ok_screen"] if screen is not None else [])},
     }
     (Path(args.out_dir) / f"three_hop_pool_{args.version}.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))

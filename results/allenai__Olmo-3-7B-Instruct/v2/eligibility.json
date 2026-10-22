@@ -1,0 +1,19 @@
+{
+  "model_id": "allenai/Olmo-3-7B-Instruct",
+  "dataset_version": "v2",
+  "items": "data/three_hop_eval_v2.parquet",
+  "n": 3000,
+  "baseline_accuracy": 0.14366666666666666,
+  "chance_null_prompt": 0.08704198424420702,
+  "n_null_missing": 30,
+  "mean_letter_mass": 0.999167263507843,
+  "hop1_known": 0.15833333333333333,
+  "hop2_known": 0.2763333333333333,
+  "hop3_known": 0.9963333333333333,
+  "hops_known": 0.07033333333333333,
+  "n_baseline_correct": 431,
+  "n_fl_defined": 1301,
+  "fl_accuracy": 0.0,
+  "single_letter_accuracy_on_fl_defined": 0.06533435818601076,
+  "n_baseline_correct_and_hops_known": 68
+}

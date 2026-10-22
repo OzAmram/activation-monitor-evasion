@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from multihop.data import COLUMNS, QUESTION_TEMPLATE, first_letter, grade, load_all
+from multihop.data import COLUMNS, QUESTION_TEMPLATE, first_letter, grade, grade_fl, last_letter, load_all
 from multihop.filtering import answer_letter, apply_filters, mentions
 
 RAW = Path(__file__).resolve().parents[1] / "data" / "raw"
@@ -110,11 +110,19 @@ def test_real_data_kept_questions_never_name_bridge_or_answer():
 def test_sample_eval_set_properties():
     from multihop.data import sample_eval_set
     pool = apply_filters(load_all(RAW))
-    ev = sample_eval_set(pool, 3000, 40, 10, 3, 10, 40, seed=0)
+    ev = sample_eval_set(pool, 3000, 30, 10, 3, 15, 60, seed=0)
     assert len(ev) == 3000 and ev["item_id"].is_unique and ev["keep"].all()
     probe = ev[ev["probe_entity"]]
-    assert probe.groupby("e2_qid").size().eq(10).all() and probe["e2_qid"].nunique() == 40
+    assert probe.groupby("e2_qid").size().eq(10).all() and probe["e2_qid"].nunique() == 30
     assert probe.groupby("e2_qid")["e3_qid"].nunique().min() >= 3
-    assert ev[~ev["probe_entity"]].groupby(["source", "r1", "r2"]).size().max() <= 40
+    assert ev[~ev["probe_entity"]].groupby(["source", "r1", "r2"]).size().max() <= 60
     # Deterministic given the seed.
-    assert ev["item_id"].tolist() == sample_eval_set(pool, 3000, 40, 10, 3, 10, 40, seed=0)["item_id"].tolist()
+    assert ev["item_id"].tolist() == sample_eval_set(pool, 3000, 30, 10, 3, 15, 60, seed=0)["item_id"].tolist()
+
+
+def test_first_last_letter_format():
+    assert last_letter("Sacramento") == "O"
+    assert last_letter("Rinkēvičs") == "S"
+    assert last_letter("Washington, D.C.") is None
+    assert grade_fl("SO", "SO") and grade_fl("S O", "SO") and grade_fl("s, o", "SO")
+    assert not grade_fl("S", "SO") and not grade_fl("OS", "SO")

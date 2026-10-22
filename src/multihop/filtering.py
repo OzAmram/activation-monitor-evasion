@@ -9,7 +9,7 @@ from collections import defaultdict
 
 import pandas as pd
 
-from multihop.data import first_letter
+from multihop.data import QUESTION_TEMPLATE_FL, first_letter, last_letter
 
 FILTERS = [
     "ok_letter",        # e3 name starts with an A-Z letter and not with "The "
@@ -19,7 +19,12 @@ FILTERS = [
     "ok_collision",     # letter differs from e1, e2, and the shortcut r2(e1)
     "ok_wellformed",    # question names neither e2 nor e3 (nor aliases)
     "ok_dedup",         # first occurrence of the same (e1, e2, e3) fact across sources
+    "ok_timeless",      # neither hop is a time-varying office (head of state, CEO, president, ...)
 ]
+
+# Relations whose value changes with each term of office, so the ground truth depends on the snapshot date.
+# Hopping Too Late: Wikidata properties; TwoHopFact: rough relation categories.
+TIME_VARYING_RELATIONS = {"P35", "P169", "P1789", "president", "ceo"}
 
 
 def _strip_the(name: str) -> str:
@@ -52,7 +57,9 @@ def mentions(text: str, names: list[str]) -> list[str]:
     return hits
 
 
-def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
+def apply_filters(df: pd.DataFrame, screen: pd.DataFrame | None = None, screen_threshold: float = 0.5) -> pd.DataFrame:
+    """Apply all filters. If `screen` (columns np, obj, p_yes; from scripts/screen_facts.py) is given, also
+    require both single-hop facts to be judged sensible (`ok_screen`, p_yes >= screen_threshold)."""
     df = df.copy()
     df["letter"] = [answer_letter(x) for x in df["e3"]]
     df["ok_letter"] = df["letter"].notna()
@@ -91,7 +98,27 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
 
     df["ok_dedup"] = ~df.duplicated(subset=["e1_qid", "e2_qid", "e3_qid"], keep="first")
 
-    df["keep"] = df[FILTERS].all(axis=1)
-    failing = ~df[FILTERS]
+    df["ok_timeless"] = ~(df["r1"].isin(TIME_VARYING_RELATIONS) | df["r2"].isin(TIME_VARYING_RELATIONS))
+
+    # Secondary first+last-letter format: annotate only (not part of `keep`). Valid if the last letter is
+    # defined and shared by all e3 aliases (aliases not ending in a letter are ignored).
+    df["letter_last"] = [last_letter(x) for x in df["e3"]]
+    df["ok_fl"] = [l is not None and {last_letter(a) for a in al} - {None} == {l} for l, al in zip(df["letter_last"], df["e3_aliases"])]
+    df["question_fl"] = [QUESTION_TEMPLATE_FL.format(np=x) for x in df["np"]]
+
+    filters = list(FILTERS)
+    if screen is not None:
+        p = dict(zip(zip(screen["np"], screen["obj"]), screen["p_yes"]))
+        df["p_yes_hop1"] = [p.get(k) for k in zip(df["np1"], df["e2"])]
+        df["p_yes_hop2"] = [p.get(k) for k in zip(df["np2"], df["e3"])]
+        pre = df[filters].all(axis=1)
+        missing = pre & (df["p_yes_hop1"].isna() | df["p_yes_hop2"].isna())
+        if missing.any():
+            raise ValueError(f"{missing.sum()} otherwise-kept items have no screening score; rerun scripts/screen_facts.py")
+        df["ok_screen"] = (df["p_yes_hop1"] >= screen_threshold) & (df["p_yes_hop2"] >= screen_threshold)
+        filters.append("ok_screen")
+
+    df["keep"] = df[filters].all(axis=1)
+    failing = ~df[filters]
     df["drop_reason"] = failing.idxmax(axis=1).where(failing.any(axis=1), None)
     return df

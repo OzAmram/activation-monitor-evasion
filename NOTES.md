@@ -68,3 +68,29 @@ Finding: per-entity variety is limited by the data — an e2 has only 2-6 r2 rel
 - Source noise: Hopping Too Late inherits bad Wikidata facts (e.g. "Ralph Lauren Corporation founded by Latvia"). A type-frequency heuristic flags ~400/11,889 kept HTL items but mostly real facts, so no filter added.
 - Time-varying relations (head of state, CEO, president) — ~140 eval items as r2, ~120 as r1. Ground truth is a 2024 snapshot. Asked user whether to drop.
 - User idea: second answer format with first + last letter. Pros/cons given to user; not implemented yet.
+
+## 2026-10-22 — Autonomous session: dataset v2, screening, Olmo eligibility (M1 done), M2 started
+
+**Goal (user):** drop time-varying relations, screen questions for nonsense facts, then continue autonomously; download Llama in parallel.
+
+**What was done (commands; all decisions also in README Decisions table):**
+- Time-varying office relations dropped (`ok_timeless`), single-hop noun phrases `np1`/`np2` added, first+last-letter annotation added.
+- Screening: `HF_HUB_CACHE=/root/hf_hub_ephemeral .venv/bin/python scripts/screen_facts.py --pool <pre-screen pool> --out data/screen_v2.parquet` (judge Qwen/Qwen3-8B, ~11 min). Judge model downloaded to the ephemeral container disk because of the /workspace quota (see problems).
+- `.venv/bin/python scripts/build_dataset.py --version v2 --screen data/screen_v2.parquet` → 24,226 kept items.
+- `.venv/bin/python scripts/sample_eval_set.py --pool data/three_hop_pool_v2.parquet --out data/three_hop_eval_v2.parquet` → 3,000 items (30 probe entities × 10).
+- `.venv/bin/python scripts/compute_eligibility.py --config configs/olmo3_7b.yaml --items data/three_hop_eval_v2.parquet` → `results/allenai__Olmo-3-7B-Instruct/v2/eligibility.{parquet,json}`.
+- Verified citations: Kowalski et al. arXiv:2608.21664 and Lindsey arXiv:2601.01828 exist with matching titles; baseline word list extracted (99 unique).
+- Tests: `pytest tests/test_data.py tests/test_eligibility.py` → 12 passed.
+
+**Results (Olmo 3 7B Instruct, eval v2, n = 3,000, greedy):**
+- Three-hop accuracy 14.4% (bootstrap 95% CI 13.1–15.7%) vs null-prompt chance 8.7% (8.2–9.3%). TwoHopFact 19.6%, Hopping Too Late 9.0%.
+- hop1 known 15.8%, hop2 27.6%, hop3 (spelling) 99.6%; all hops 7.0% (211 items); accuracy on all-hops-known items 32%.
+- Eligible: **431 baseline_correct (primary), 68 baseline_correct & hops_known (strict)**. Only 19 of the 300 probe-entity items are baseline_correct.
+- First+last-letter format: 0/1,301 — Olmo answers with a single letter, ignoring the two-letter instruction. Not useful for this model.
+- 99.9% of next-token probability is on letter tokens (answers are well-formatted).
+- Manually checked raw outputs: grading of hops and letters behaves as intended (errors are real model errors, e.g. Robinson Crusoe → "United States").
+
+**Open questions / known problems:**
+- **Disk quota on /workspace (~50 GB, 48 GB used)**: Llama download failed half-way (2/4 shards, partial files left in HF cache); Qwen3-8B judge put on ephemeral disk. Planned activation storage (~70–140 GB) will not fit. Needs user decision (free uv cache 11 GB / delete models / bigger volume).
+- Screening precision ~40% on a 25-fact spot check.
+- Very few probe-entity items are baseline_correct for Olmo (19) → per-entity probe evaluation on the eligible set will be thin for this model.

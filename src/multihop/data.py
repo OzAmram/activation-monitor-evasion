@@ -10,6 +10,8 @@ from pathlib import Path
 import pandas as pd
 
 QUESTION_TEMPLATE = "What is the first letter of the name of {np}? Answer immediately with only the letter."
+# Secondary answer format (user suggestion): first and last letter, e.g. Sacramento -> "SO".
+QUESTION_TEMPLATE_FL = "What are the first and last letters of the name of {np}? Answer immediately with only the two letters."
 
 # TwoHopFact gives r2 only as a sentence prefix ("{} was born in the city of"); we need a noun phrase.
 # Hand-written, one per r2 sentence template in the release. Unknown templates raise (no silent fallback).
@@ -41,7 +43,7 @@ COLUMNS = [
     "e1", "e1_qid", "e1_type", "r1",
     "e2", "e2_qid", "e2_type", "e2_aliases", "r2",
     "e3", "e3_qid", "e3_type", "e3_aliases",
-    "np", "question",
+    "np", "np1", "np2", "question",
 ]
 
 
@@ -52,6 +54,17 @@ def first_letter(name: str) -> str | None:
     if not s or not ("A" <= s[0].upper() <= "Z"):
         return None
     return s[0].upper()
+
+
+def last_letter(name: str) -> str | None:
+    """Uppercase last character of `name` after stripping accents, or None if it is not an A-Z letter."""
+    return first_letter(name.strip()[::-1]) if name.strip() else None
+
+
+def grade_fl(output: str, target: str) -> bool:
+    """First two letters of the output (ignoring spaces/punctuation between them), case-insensitive."""
+    letters = [c for c in output if c.isalpha()][:2]
+    return "".join(letters).upper() == target.upper()
 
 
 def grade(output: str, target_letter: str) -> bool:
@@ -94,6 +107,9 @@ def load_twohopfact(path: Path) -> pd.DataFrame:
         "e3": t["e3.value"], "e3_qid": t["e3.wikidata_qid"], "e3_type": t["e3.rough_category"],
         "e3_aliases": [_parse_aliases(a, l) for a, l in zip(t["e3.aliases"], t["e3.value"])],
         "np": np_,
+        # Single-hop noun phrases (for the per-model hops_known check): r1 applied to e1, r2 applied to e2.
+        "np1": r1_np,
+        "np2": [TWOHOPFACT_R2_NP[tpl].format(x) for tpl, x in zip(t["r2.template"], t["e2.value"])],
     })
     return _finish(df)
 
@@ -112,6 +128,8 @@ def load_hoppingtoolate(path: Path) -> pd.DataFrame:
         "e3_aliases": [_parse_aliases(a, l) for a, l in zip(h["e3_aliases"], h["e3_label"])],
         # source_prompt is a cloze prefix ending in " is" (e.g. "the capital of ... of Stephen Harper is").
         "np": h["source_prompt"].str.removesuffix(" is"),
+        "np1": [tpl.format(x) for tpl, x in zip(h["r1_template"], h["e1_label"])],
+        "np2": [tpl.format(x) for tpl, x in zip(h["r2_template"], h["e2_label"])],
     })
     if df["np"].str.endswith(" is").any():
         raise ValueError("HoppingTooLate noun phrase still ends with ' is'")
